@@ -1,1 +1,27 @@
-/dataset
+# Dataset (too large for GitHub — see data/README.md for structure)
+dataset/raw/
+dataset/flat/
+dataset/masks/
+
+# Model checkpoints (large binary files — retrain using train_all.py)
+checkpoints/*.pt
+checkpoints/*.pth
+!checkpoints/.gitkeep
+
+# Raw training logs (keep per-arch CSV metrics)
+logs/train_run.log
+logs/train_all.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Shell helpers (runtime only)
+src/run_vgg16.sh
