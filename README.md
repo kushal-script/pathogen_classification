@@ -5,6 +5,13 @@
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.7-orange)](https://pytorch.org)
 [![Accuracy](https://img.shields.io/badge/Ensemble%20Accuracy-92.75%25-brightgreen)]()
 [![AUC--ROC](https://img.shields.io/badge/AUC--ROC-99.05%25-brightgreen)]()
+[![Paper](https://img.shields.io/badge/Research%20Paper-PDF-red)](ResearchPaper.pdf)
+
+---
+
+## Research Paper
+
+The full IEEE-format research paper is available here: **[ResearchPaper.pdf](ResearchPaper.pdf)**
 
 ---
 
