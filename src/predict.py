@@ -11,6 +11,8 @@ Displays:
 """
 import os
 import sys
+import shutil
+from datetime import datetime
 
 import cv2
 import numpy as np
@@ -255,14 +257,47 @@ def predict(image_path, models, device):
         fontsize=13, fontweight='bold', y=1.02)
     plt.tight_layout()
 
-    # Save
-    os.makedirs(RESULTS_DIR, exist_ok=True)
-    basename = os.path.splitext(os.path.basename(image_path))[0]
-    save_path = os.path.join(RESULTS_DIR, f'predict_{basename}.png')
-    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    # ── Save to predictions/<datetime>/ folder ─────────────────────────
+    timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+    pred_dir = os.path.join(BASE_DIR, 'predictions', timestamp)
+    os.makedirs(pred_dir, exist_ok=True)
+
+    # Save visualisation
+    vis_path = os.path.join(pred_dir, 'prediction.png')
+    plt.savefig(vis_path, dpi=150, bbox_inches='tight')
     plt.close()
-    print(f"\n  Saved: {save_path}")
-    print(f"  Open:  open \"{save_path}\"\n")
+
+    # Copy original input image
+    orig_ext = os.path.splitext(image_path)[1]
+    shutil.copy2(image_path, os.path.join(pred_dir, f'input{orig_ext}'))
+
+    # Save prediction summary as text
+    summary_path = os.path.join(pred_dir, 'summary.txt')
+    with open(summary_path, 'w') as f:
+        f.write(f"Image: {os.path.basename(image_path)}\n")
+        f.write(f"Timestamp: {timestamp}\n")
+        if actual_class:
+            f.write(f"Actual class: {actual_class}\n")
+        f.write(f"\nPer-model predictions:\n")
+        f.write(f"{'Model':<24} {'Prediction':<12} {'Confidence':>10}\n")
+        f.write(f"{'-'*48}\n")
+        for arch, _ in models:
+            probs = all_probs[arch]
+            pred_idx = int(probs.argmax())
+            f.write(f"{arch:<24} {CLASSES[pred_idx]:<12} {probs[pred_idx]:>9.2%}\n")
+        f.write(f"\n{'ENSEMBLE (avg)':<24} {CLASSES[ensemble_pred]:<12} {ensemble_probs[ensemble_pred]:>9.2%}\n")
+        if actual_class:
+            match = "CORRECT" if actual_class == CLASSES[ensemble_pred] else "WRONG"
+            f.write(f"\nResult: {match}\n")
+        f.write(f"\nEnsemble class probabilities:\n")
+        for cls, p in sorted(zip(CLASSES, ensemble_probs), key=lambda x: -x[1]):
+            f.write(f"  {cls:<12} {p:.4f}\n")
+
+    print(f"\n  Prediction saved to: {pred_dir}/")
+    print(f"    prediction.png  — visualisation (model bars + Grad-CAM)")
+    print(f"    input{orig_ext:<11} — original image")
+    print(f"    summary.txt     — prediction details")
+    print(f"\n  Open:  open \"{pred_dir}\"\n")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────

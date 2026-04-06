@@ -23,5 +23,8 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
+# Prediction outputs (generated at inference time)
+predictions/
+
 # Shell helpers (runtime only)
 src/run_vgg16.sh
