@@ -24,7 +24,7 @@ import torch
 from PIL import Image
 
 from dataset import CLASSES, make_transforms
-from model import build_model, ARCHS, ARCH_INPUT_SIZE, gradcam_target_layer
+from model import build_model, ARCHS, ARCH_INPUT_SIZE, gradcam_target_layer, disable_inplace_relu
 
 BASE_DIR       = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CHECKPOINT_DIR = os.path.join(BASE_DIR, 'checkpoints')
@@ -147,11 +147,7 @@ def predict(image_path, models, device):
     ensemble_cam_count = 0
 
     for arch, model in models:
-        if arch == 'vgg16':
-            # VGG16 inplace ReLU breaks backward hooks — use placeholder
-            grad_cams[arch] = None
-            continue
-
+        disable_inplace_relu(model)
         layer = gradcam_target_layer(model, arch)
         gcam = GradCAM(model, layer)
         tensor = all_tensors[arch].detach().requires_grad_(True)
@@ -225,15 +221,10 @@ def predict(image_path, models, device):
     for idx, (arch, _) in enumerate(models):
         ax = axes[1, idx + 1]
         cam = grad_cams[arch]
-        if cam is not None:
-            heatmap = mpl_cm.jet(cam)[:, :, :3]
-            overlay = np.clip(0.5 * img_float + 0.5 * heatmap, 0, 1)
-            ax.imshow(overlay)
-            ax.set_title(f"Grad-CAM\n{arch}", fontsize=8)
-        else:
-            # VGG16 — show image with note
-            ax.imshow(img_display)
-            ax.set_title(f"Grad-CAM\n{arch}\n(skipped: inplace ReLU)", fontsize=7, color='gray')
+        heatmap = mpl_cm.jet(cam)[:, :, :3]
+        overlay = np.clip(0.5 * img_float + 0.5 * heatmap, 0, 1)
+        ax.imshow(overlay)
+        ax.set_title(f"Grad-CAM\n{arch}", fontsize=8)
         ax.axis('off')
 
     # Ensemble Grad-CAM

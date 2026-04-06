@@ -72,6 +72,13 @@ def get_param_groups(model, arch, backbone_lr, head_lr):
             {'params': head,     'lr': head_lr}]
 
 
+def disable_inplace_relu(model):
+    """Set inplace=False on all ReLU layers so backward hooks work for Grad-CAM."""
+    for module in model.modules():
+        if isinstance(module, nn.ReLU):
+            module.inplace = False
+
+
 def gradcam_target_layer(model, arch):
     """Return the last conv/feature layer suitable for Grad-CAM."""
     if arch == 'efficientnet_b3':   return model.features[-1]

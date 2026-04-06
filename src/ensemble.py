@@ -25,7 +25,7 @@ from sklearn.metrics import classification_report, confusion_matrix, roc_auc_sco
 from sklearn.preprocessing import label_binarize
 
 from dataset import get_dataloaders, CLASSES, VAL_TRANSFORMS, make_transforms
-from model import build_model, ARCHS, gradcam_target_layer, ARCH_INPUT_SIZE
+from model import build_model, ARCHS, gradcam_target_layer, ARCH_INPUT_SIZE, disable_inplace_relu
 
 BASE_DIR       = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR       = os.path.join(BASE_DIR, 'dataset', 'flat')
@@ -94,12 +94,11 @@ class GradCAM:
 
 
 def ensemble_gradcam(models, img_tensors_per_arch, class_idx, arch_list):
-    """Average Grad-CAM heatmaps across models (skips VGG16 — inplace ReLU hook conflict)."""
+    """Average Grad-CAM heatmaps across all models."""
     cam_sum, n_used = None, 0
     target_h, target_w = None, None
     for arch, model in models:
-        if arch == 'vgg16':          # VGG16 inplace ReLU breaks backward hooks
-            continue
+        disable_inplace_relu(model)
         layer   = gradcam_target_layer(model, arch)
         gradcam = GradCAM(model, layer)
         img_t   = img_tensors_per_arch[arch].detach().requires_grad_(True)
