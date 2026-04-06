@@ -1,7 +1,6 @@
 # Dataset (too large for GitHub — see data/README.md for structure)
 dataset/raw/
 dataset/flat/
-dataset/other/
 dataset/masks/
 
 # Model checkpoints (large binary files — retrain using train_all.py)
