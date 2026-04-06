@@ -134,8 +134,7 @@ def predict(image_path, models, device):
     # Full probability table
     print(f"\n  Ensemble class probabilities:")
     for cls, p in sorted(zip(CLASSES, ensemble_probs), key=lambda x: -x[1]):
-        bar = '#' * int(p * 40)
-        print(f"    {cls:<12} {p:.4f}  {bar}")
+        print(f"    {cls:<12} {p:.4f}")
 
     print(f"\n{'='*65}")
 
