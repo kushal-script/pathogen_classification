@@ -1,7 +1,6 @@
 # Dataset (too large for GitHub — see data/README.md for structure)
 dataset/raw/
 dataset/flat/
-dataset/masks/
 
 # Model checkpoints (large binary files — retrain using train_all.py)
 checkpoints/*.pt
@@ -25,6 +24,3 @@ Thumbs.db
 
 # Prediction outputs (generated at inference time)
 predictions/
-
-# Shell helpers (runtime only)
-src/run_vgg16.sh

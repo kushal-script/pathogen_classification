@@ -5,7 +5,7 @@ Already-trained models (checkpoint exists) are automatically skipped.
 Usage:
     python train_all.py
     python train_all.py --force          # retrain everything
-    python train_all.py --skip efficientnet_b3   # skip specific arch
+    python train_all.py --skip           # skip specific arch
 """
 import os
 import sys
