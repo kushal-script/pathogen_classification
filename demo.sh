@@ -5,8 +5,9 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="$PROJECT_DIR/.venv"
 SRC_DIR="$PROJECT_DIR/src"
-SAMPLE_DIR="$PROJECT_DIR/sample_data"
+DATASET_DIR="$PROJECT_DIR/dataset/flat"
 RESULTS_DIR="$PROJECT_DIR/results"
+PRED_DIR="$PROJECT_DIR/predictions"
 
 # ── Colors ────────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -16,7 +17,8 @@ info()    { echo -e "${CYAN}  ▸ $*${RESET}"; }
 ok()      { echo -e "${GREEN}  ✔ $*${RESET}"; }
 warn()    { echo -e "${YELLOW}  ⚠ $*${RESET}"; }
 section() { echo -e "\n${BOLD}${MAGENTA}━━━ $* ━━━${RESET}"; }
-pause()   { echo -e "\n${YELLOW}  [Press Enter to continue...]${RESET}"; read -r; }
+pause()   { echo -e "\n${YELLOW}  [Press Enter to continue...]${RESET}"; read -r _pause_dummy || true; }
+hr()      { echo -e "  ${BOLD}──────────────────────────────────────────${RESET}"; }
 
 # ── Guard: env must exist ─────────────────────────────────────────────────────
 if [[ ! -d "$VENV_DIR" ]]; then
@@ -26,13 +28,13 @@ fi
 # shellcheck disable=SC1091
 source "$VENV_DIR/bin/activate"
 
-clear
+clear 2>/dev/null || true
 
 # ── Title slide ───────────────────────────────────────────────────────────────
 echo -e "${BOLD}${CYAN}"
 echo "  ╔═══════════════════════════════════════════════════════════════╗"
-echo "  ║         PATHOGEN CLASSIFICATION IN PLANT LEAVES               ║"
-echo "  ║         Deep Learning Ensemble — Live Demo                    ║"
+echo "  ║       PATHOGEN CLASSIFICATION IN PLANT LEAVES                 ║"
+echo "  ║       Deep Learning Ensemble — Live Demo                      ║"
 echo "  ╚═══════════════════════════════════════════════════════════════╝"
 echo -e "${RESET}"
 echo "  5 CNN architectures · 4 pathogen classes · 92.75% ensemble accuracy"
@@ -94,59 +96,135 @@ done
 
 pause
 
-# ── Section 3: Live single-image prediction ───────────────────────────────────
-section "3 / 4  Live Inference — Single Image Prediction"
-
-# Pick one representative image from each class
-declare -A DEMO_IMAGES
-for cls in bacterial fungal healthy mould; do
-    img=$(find "$SAMPLE_DIR/$cls" -type f \( -iname "*.jpg" -o -iname "*.png" \) | head -1)
-    if [[ -n "$img" ]]; then
-        DEMO_IMAGES[$cls]="$img"
-    fi
-done
-
+# ── Section 3: Live inference with interactive dataset selection ───────────────
+section "3 / 4  Live Inference — Choose from Dataset"
 echo ""
-echo "  Available sample classes:"
-i=1
-declare -A IDX_TO_CLS
-for cls in bacterial fungal healthy mould; do
-    if [[ -v "DEMO_IMAGES[$cls]" ]]; then
-        echo "    $i) $cls  →  $(basename "${DEMO_IMAGES[$cls]}")"
-        IDX_TO_CLS[$i]=$cls
-        i=$((i+1))
-    fi
-done
 
+# Python handles all three selection steps.
+# All UI output goes to stderr (not buffered, not captured by $()).
+# Only the final image path is printed to stdout for bash to capture.
+CHOSEN_IMAGE=$(python3 - "$DATASET_DIR" <<'PYEOF'
+import sys, os, re
+
+DATASET_DIR = sys.argv[1]
+CLASSES = ["bacterial", "fungal", "healthy", "mould"]
+ui = sys.stderr  # all display output here — never buffered by bash $()
+
+def p(*args, **kwargs):
+    print(*args, **kwargs, file=ui)
+
+def prompt(msg):
+    ui.write(msg)
+    ui.flush()
+    with open("/dev/tty") as tty:
+        return tty.readline().strip()
+
+IMG_EXTS = {".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"}
+
+def count_images(directory):
+    return sum(1 for f in os.listdir(directory) if os.path.splitext(f)[1] in IMG_EXTS)
+
+def get_prefix(filename):
+    return re.sub(r'_\d+\.[^.]+$', '', filename)
+
+# ── Step 1: Pathogen class ────────────────────────────────────────────────────
+p("  \033[1mStep 1: Choose a pathogen class\033[0m")
+class_options = []
+for cls in CLASSES:
+    cls_dir = os.path.join(DATASET_DIR, cls)
+    n = count_images(cls_dir) if os.path.isdir(cls_dir) else 0
+    class_options.append((cls, n))
+
+for i, (cls, n) in enumerate(class_options, 1):
+    p(f"    {i})  {cls}  ({n} images)")
+
+p()
+while True:
+    raw = prompt("  Enter class number (1-4): ")
+    if raw.isdigit() and 1 <= int(raw) <= 4:
+        chosen_class, _ = class_options[int(raw) - 1]
+        p(f"  \033[0;32m  ✔ Selected class: \033[1m{chosen_class}\033[0m")
+        break
+    p("  \033[1;33m  ⚠ Please enter a number between 1 and 4.\033[0m")
+
+# ── Step 2: Disease / plant ───────────────────────────────────────────────────
+p("\n  \033[1m──────────────────────────────────────────\033[0m")
+p(f"\n  \033[1mStep 2: Choose a disease / plant\033[0m\n")
+
+cls_dir = os.path.join(DATASET_DIR, chosen_class)
+all_files = sorted(
+    f for f in os.listdir(cls_dir)
+    if os.path.splitext(f)[1] in IMG_EXTS
+)
+
+seen = {}
+for f in all_files:
+    pfx = get_prefix(f)
+    seen.setdefault(pfx, 0)
+    seen[pfx] += 1
+
+prefixes = sorted(seen.keys())
+for i, pfx in enumerate(prefixes, 1):
+    p(f"    {i})  {pfx.replace('_', ' ')}  ({seen[pfx]} images)")
+
+p()
+while True:
+    raw = prompt(f"  Enter disease number (1-{len(prefixes)}): ")
+    if raw.isdigit() and 1 <= int(raw) <= len(prefixes):
+        chosen_prefix = prefixes[int(raw) - 1]
+        p(f"  \033[0;32m  ✔ Selected: \033[1m{chosen_prefix.replace('_', ' ')}\033[0m")
+        break
+    p(f"  \033[1;33m  ⚠ Please enter a number between 1 and {len(prefixes)}.\033[0m")
+
+# ── Step 3: Image number ──────────────────────────────────────────────────────
+p("\n  \033[1m──────────────────────────────────────────\033[0m")
+p(f"\n  \033[1mStep 3: Choose an image number\033[0m\n")
+
+disease_files = sorted(f for f in all_files if get_prefix(f) == chosen_prefix)
+total = len(disease_files)
+
+p(f"  Available images: \033[1m1 – {total}\033[0m\n")
+p("  Examples:")
+for j in range(min(3, total)):
+    p(f"    {j+1} →  {disease_files[j]}")
+if total > 3:
+    p("    ...")
+    p(f"    {total} →  {disease_files[-1]}")
+
+p()
+while True:
+    raw = prompt(f"  Enter image number (1-{total}): ")
+    if raw.isdigit() and 1 <= int(raw) <= total:
+        chosen_file = disease_files[int(raw) - 1]
+        p(f"  \033[0;32m  ✔ Selected: \033[1m{chosen_file}\033[0m")
+        break
+    p(f"  \033[1;33m  ⚠ Please enter a number between 1 and {total}.\033[0m")
+
+# Only the path goes to stdout — captured cleanly by bash $()
+print(os.path.join(cls_dir, chosen_file), end="")
+PYEOF
+)
+
+# ── Run prediction ────────────────────────────────────────────────────────────
 echo ""
-echo -n "  Choose a class to predict (1-$((i-1)), or Enter for all): "
-read -r CHOICE
+hr
+echo ""
+echo -e "  ${BOLD}Running ensemble prediction...${RESET}"
+echo -e "  Image : ${CYAN}$(basename "$CHOSEN_IMAGE")${RESET}"
+echo ""
 
-run_prediction() {
-    local cls="$1"
-    local img="${DEMO_IMAGES[$cls]}"
-    echo ""
-    echo -e "  ${BOLD}Running ensemble prediction on: $(basename "$img")${RESET}"
-    echo -e "  True label: ${CYAN}$cls${RESET}"
-    echo ""
-    (cd "$SRC_DIR" && python3 predict.py "$img")
-    echo ""
-    # Open the latest prediction folder
-    LATEST_PRED=$(ls -td "$PROJECT_DIR/predictions"/*/ 2>/dev/null | head -1)
-    if [[ -n "$LATEST_PRED" ]]; then
-        ok "Grad-CAM saved to: $LATEST_PRED"
-        open "$LATEST_PRED" 2>/dev/null || true
-    fi
-}
+mkdir -p "$PRED_DIR"
+(cd "$SRC_DIR" && python3 predict.py "$CHOSEN_IMAGE")
 
-if [[ -z "$CHOICE" ]]; then
-    for cls in bacterial fungal healthy mould; do
-        [[ -v "DEMO_IMAGES[$cls]" ]] && run_prediction "$cls"
-    done
-elif [[ -v "IDX_TO_CLS[$CHOICE]" ]]; then
-    run_prediction "${IDX_TO_CLS[$CHOICE]}"
+# Show where output was saved and open it
+LATEST_PRED=$(ls -td "$PRED_DIR"/*/ 2>/dev/null | head -1)
+if [[ -n "$LATEST_PRED" ]]; then
+    echo ""
+    ok "Grad-CAM + report saved to:  $LATEST_PRED"
+    info "Opening prediction output ..."
+    open "$LATEST_PRED" 2>/dev/null || true
 else
-    warn "Invalid choice — skipping live prediction."
+    warn "predictions/ folder appears empty — check if predict.py completed."
 fi
 
 pause
@@ -155,7 +233,7 @@ pause
 section "4 / 4  Full Ensemble Evaluation (optional)"
 echo ""
 echo -n "  Run full ensemble evaluation on the test set? (y/N): "
-read -r RUN_ENSEMBLE
+read -r RUN_ENSEMBLE || RUN_ENSEMBLE="N"
 
 if [[ "${RUN_ENSEMBLE,,}" == "y" ]]; then
     echo ""
