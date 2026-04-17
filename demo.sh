@@ -165,7 +165,6 @@ while True:
     raw = prompt(f"  Enter image number (1-{total}): ")
     if raw.isdigit() and 1 <= int(raw) <= total:
         chosen = images[int(raw) - 1]
-        meta   = manifest[chosen]
         p(f"\n  \033[0;32m  ✔ Selected: \033[1m{chosen}\033[0m")
         break
     p(f"  \033[1;33m  ⚠ Please enter a number between 1 and {total}.\033[0m")
@@ -174,74 +173,127 @@ print(os.path.join(DEMO_DIR, chosen), end="")
 PYEOF
 )
 
-CHOSEN_NAME=$(basename "$CHOSEN_IMAGE")
+# ---------------------------------------------------------------------------
+# run_prediction: given an image path, looks up its ground-truth class from
+# manifest.json, runs ensemble inference, and prints the result verdict.
+# ---------------------------------------------------------------------------
+run_prediction() {
+    local image_path="$1"
+    local image_name
+    image_name=$(basename "$image_path")
 
-ACTUAL_CLASS=$(python3 -c "
+    local actual_class actual_disease
+    actual_class=$(python3 -c "
 import json
 with open('$DEMO_IMG_DIR/manifest.json') as f:
     m = json.load(f)
-print(m.get('$CHOSEN_NAME', {}).get('class', 'unknown'), end='')
-")
-
-ACTUAL_DISEASE=$(python3 -c "
+print(m.get('$image_name', {}).get('class', 'unknown'), end='')
+" 2>/dev/null || echo "unknown")
+    actual_disease=$(python3 -c "
 import json
 with open('$DEMO_IMG_DIR/manifest.json') as f:
     m = json.load(f)
-print(m.get('$CHOSEN_NAME', {}).get('disease', ''), end='')
-")
-
-echo ""
-hr
-echo ""
-echo -e "  ${BOLD}Running ensemble prediction...${RESET}"
-echo -e "  Image   : ${CYAN}${CHOSEN_NAME}${RESET}"
-echo -e "  Actual  : ${CYAN}${ACTUAL_CLASS}${RESET}  (${ACTUAL_DISEASE})"
-echo ""
-
-mkdir -p "$PRED_DIR"
-(cd "$SRC_DIR" && python3 predict.py "$CHOSEN_IMAGE")
-
-LATEST_PRED=$(ls -td "$PRED_DIR"/*/ 2>/dev/null | head -1)
-if [[ -n "$LATEST_PRED" && -f "${LATEST_PRED}summary.txt" ]]; then
-    PREDICTED_CLASS=$(grep -i "^ENSEMBLE (avg)" "${LATEST_PRED}summary.txt" | awk '{print $3}')
-    ACTUAL_LOWER=$(echo "$ACTUAL_CLASS"    | tr '[:upper:]' '[:lower:]')
-    PREDICTED_LOWER=$(echo "$PREDICTED_CLASS" | tr '[:upper:]' '[:lower:]')
+print(m.get('$image_name', {}).get('disease', ''), end='')
+" 2>/dev/null || echo "")
 
     echo ""
-    echo -e "  ${BOLD}━━━ Classification Result ━━━━━━━━━━━━━━━━━━━━${RESET}"
-    echo -e "  Actual class    : ${CYAN}${BOLD}${ACTUAL_CLASS}${RESET}"
-    echo -e "  Predicted class : ${CYAN}${BOLD}${PREDICTED_CLASS}${RESET}"
-    if [[ "$ACTUAL_LOWER" == "$PREDICTED_LOWER" ]]; then
-        echo -e "  Verdict         : ${GREEN}${BOLD}✔  CORRECT${RESET}"
+    hr
+    echo ""
+    echo -e "  ${BOLD}Running ensemble prediction...${RESET}"
+    echo -e "  Image   : ${CYAN}${image_name}${RESET}"
+    echo -e "  Actual  : ${CYAN}${actual_class}${RESET}  (${actual_disease})"
+    echo ""
+
+    mkdir -p "$PRED_DIR"
+    (cd "$SRC_DIR" && python3 predict.py "$image_path")
+
+    local latest_pred
+    latest_pred=$(ls -td "$PRED_DIR"/*/ 2>/dev/null | head -1)
+    if [[ -n "$latest_pred" && -f "${latest_pred}summary.txt" ]]; then
+        local predicted_class actual_lower predicted_lower
+        predicted_class=$(grep -i "^ENSEMBLE (avg)" "${latest_pred}summary.txt" | awk '{print $3}')
+        actual_lower=$(echo "$actual_class"    | tr '[:upper:]' '[:lower:]')
+        predicted_lower=$(echo "$predicted_class" | tr '[:upper:]' '[:lower:]')
+
+        echo ""
+        echo -e "  ${BOLD}━━━ Classification Result ━━━━━━━━━━━━━━━━━━━━${RESET}"
+        echo -e "  Actual class    : ${CYAN}${BOLD}${actual_class}${RESET}"
+        echo -e "  Predicted class : ${CYAN}${BOLD}${predicted_class}${RESET}"
+        if [[ "$actual_lower" == "$predicted_lower" ]]; then
+            echo -e "  Verdict         : ${GREEN}${BOLD}✔  CORRECT${RESET}"
+        else
+            echo -e "  Verdict         : ${RED}${BOLD}✘  INCORRECT${RESET}"
+        fi
+        echo -e "  ${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+        echo ""
+        ok "Grad-CAM + full report saved to:  $latest_pred"
     else
-        echo -e "  Verdict         : ${RED}${BOLD}✘  INCORRECT${RESET}"
+        warn "Could not read prediction output. Check predictions/ folder."
     fi
-    echo -e "  ${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-    echo ""
-    ok "Grad-CAM + full report saved to:  $LATEST_PRED"
-else
-    warn "Could not read prediction output. Check predictions/ folder."
-fi
+}
 
-pause
+# Run the first prediction (image already chosen above)
+run_prediction "$CHOSEN_IMAGE"
 
 # ---------------------------------------------------------------------------
-# Section 4 — Full ensemble evaluation (optional)
-# Reruns ensemble.py over the complete test split and saves updated results.
+# Section 4 — Continue predicting or end
+# Loops until the user enters N, allowing multiple live predictions.
 # ---------------------------------------------------------------------------
-section "4 / 4  Full Ensemble Evaluation (optional)"
-echo ""
-echo -n "  Run full ensemble evaluation on the test set? (y/N): "
-read -r RUN_ENSEMBLE || RUN_ENSEMBLE="N"
+section "4 / 4  Continue Demo"
 
-if [[ "$(echo "$RUN_ENSEMBLE" | tr '[:upper:]' '[:lower:]')" == "y" ]]; then
+MANIFEST_TOTAL=$(python3 -c "
+import json
+with open('$DEMO_IMG_DIR/manifest.json') as f:
+    print(len(json.load(f)))
+")
+
+while true; do
     echo ""
-    info "Running ensemble evaluation — this may take a few minutes ..."
-    (cd "$SRC_DIR" && python3 ensemble.py)
-    ok "Evaluation complete. Results saved to:  $RESULTS_DIR"
-else
-    info "Skipped."
-fi
+    echo -n "  Predict another image? (y/N): "
+    read -r ANOTHER || ANOTHER="N"
+
+    if [[ "$(echo "$ANOTHER" | tr '[:upper:]' '[:lower:]')" != "y" ]]; then
+        break
+    fi
+
+    NEXT_IMAGE=$(python3 - "$DEMO_IMG_DIR" "$MANIFEST_TOTAL" <<'PYEOF'
+import sys, os, json, re
+
+DEMO_DIR = sys.argv[1]
+total    = int(sys.argv[2])
+ui       = sys.stderr
+
+def p(*args, **kwargs):
+    print(*args, **kwargs, file=ui)
+
+def prompt(msg):
+    ui.write(msg); ui.flush()
+    with open("/dev/tty") as tty:
+        return tty.readline().strip()
+
+def img_num(name):
+    m = re.search(r'(\d+)', name)
+    return int(m.group(1)) if m else 0
+
+with open(os.path.join(DEMO_DIR, "manifest.json")) as f:
+    manifest = json.load(f)
+images = sorted(manifest.keys(), key=img_num)
+
+p(f"\n  Available images:  image_1  –  image_{total}\n")
+while True:
+    raw = prompt(f"  Enter image number (1-{total}): ")
+    if raw.isdigit() and 1 <= int(raw) <= total:
+        chosen = images[int(raw) - 1]
+        p(f"\n  \033[0;32m  ✔ Selected: \033[1m{chosen}\033[0m")
+        break
+    p(f"  \033[1;33m  ⚠ Please enter a number between 1 and {total}.\033[0m")
+
+print(os.path.join(DEMO_DIR, chosen), end="")
+PYEOF
+    )
+
+    run_prediction "$NEXT_IMAGE"
+done
 
 echo ""
 echo -e "${BOLD}${GREEN}"
