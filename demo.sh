@@ -1,15 +1,31 @@
 #!/usr/bin/env bash
-# demo.sh — Presentation demo for Pathogen Classification project
+#
+# demo.sh
+# Interactive presentation demo for the Pathogen Classification project.
+#
+# Walks through four sections:
+#   1. Project overview  — model architectures and test accuracies
+#   2. Pre-computed results — ensemble report and saved visualizations
+#   3. Live inference — user picks an image from demonstration_images/,
+#                       ensemble predicts, actual vs predicted class is shown
+#   4. Full evaluation (optional) — reruns ensemble.py on the entire test set
+#
+# Prerequisites:
+#   Run ./start.sh at least once to create the virtual environment and
+#   demonstration_images/ before launching this script.
+#
+# Usage:
+#   chmod +x demo.sh && ./demo.sh
+#
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="$PROJECT_DIR/.venv"
 SRC_DIR="$PROJECT_DIR/src"
-DATASET_DIR="$PROJECT_DIR/dataset/flat"
+DEMO_IMG_DIR="$PROJECT_DIR/demonstration_images"
 RESULTS_DIR="$PROJECT_DIR/results"
 PRED_DIR="$PROJECT_DIR/predictions"
 
-# ── Colors ────────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 CYAN='\033[0;36m'; MAGENTA='\033[0;35m'; BOLD='\033[1m'; RESET='\033[0m'
 
@@ -17,20 +33,28 @@ info()    { echo -e "${CYAN}  ▸ $*${RESET}"; }
 ok()      { echo -e "${GREEN}  ✔ $*${RESET}"; }
 warn()    { echo -e "${YELLOW}  ⚠ $*${RESET}"; }
 section() { echo -e "\n${BOLD}${MAGENTA}━━━ $* ━━━${RESET}"; }
-pause()   { echo -e "\n${YELLOW}  [Press Enter to continue...]${RESET}"; read -r _pause_dummy || true; }
+pause()   { echo -e "\n${YELLOW}  [Press Enter to continue...]${RESET}"; read -r _dummy || true; }
 hr()      { echo -e "  ${BOLD}──────────────────────────────────────────${RESET}"; }
 
-# ── Guard: env must exist ─────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Pre-flight checks
+# ---------------------------------------------------------------------------
 if [[ ! -d "$VENV_DIR" ]]; then
     echo -e "${RED}[ERROR]${RESET} Virtual environment not found. Run ./start.sh first."
     exit 1
 fi
+if [[ ! -d "$DEMO_IMG_DIR" || ! -f "$DEMO_IMG_DIR/manifest.json" ]]; then
+    echo -e "${RED}[ERROR]${RESET} demonstration_images/ not found. Run ./start.sh first."
+    exit 1
+fi
+
 # shellcheck disable=SC1091
 source "$VENV_DIR/bin/activate"
-
 clear 2>/dev/null || true
 
-# ── Title slide ───────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Title
+# ---------------------------------------------------------------------------
 echo -e "${BOLD}${CYAN}"
 echo "  ╔═══════════════════════════════════════════════════════════════╗"
 echo "  ║       PATHOGEN CLASSIFICATION IN PLANT LEAVES                 ║"
@@ -44,7 +68,10 @@ echo "  Models: EfficientNet-B3 · ResNet-50 · VGG-16 · DenseNet-121 · Mobile
 
 pause
 
-# ── Section 1: Project overview ───────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Section 1 — Project overview
+# Prints active compute device and per-model accuracy / parameter count.
+# ---------------------------------------------------------------------------
 section "1 / 4  Project Overview"
 python3 - <<'PYEOF'
 import torch
@@ -70,7 +97,10 @@ PYEOF
 
 pause
 
-# ── Section 2: Show existing results ─────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Section 2 — Pre-computed results
+# Displays the ensemble classification report and lists saved visualizations.
+# ---------------------------------------------------------------------------
 section "2 / 4  Pre-computed Results"
 
 if [[ -f "$RESULTS_DIR/ensemble_report.txt" ]]; then
@@ -81,34 +111,34 @@ else
 fi
 
 echo ""
-info "Opening result visualizations ..."
-OPENED=0
-for img in "$RESULTS_DIR/model_comparison.png" \
-            "$RESULTS_DIR/ensemble_confusion_matrix.png" \
-            "$RESULTS_DIR/training_curves.png"; do
-    if [[ -f "$img" ]]; then
-        open "$img" 2>/dev/null || true
-        ok "Opened: $(basename "$img")"
-        OPENED=$((OPENED+1))
-    fi
+info "Result visualizations saved in:  results/"
+for img in model_comparison.png ensemble_confusion_matrix.png training_curves.png; do
+    [[ -f "$RESULTS_DIR/$img" ]] && ok "$img" || warn "Missing: $img"
 done
-[[ $OPENED -eq 0 ]] && warn "No result images found in results/"
 
 pause
 
-# ── Section 3: Live inference with interactive dataset selection ───────────────
-section "3 / 4  Live Inference — Choose from Dataset"
+# ---------------------------------------------------------------------------
+# Section 3 — Live inference
+#
+# The user selects an image number from demonstration_images/.
+# The ensemble runs predict.py and the terminal displays:
+#   - per-model predictions and confidences
+#   - ensemble result
+#   - actual class (from manifest.json) vs predicted class
+#   - CORRECT / INCORRECT verdict
+#
+# All interactive UI output goes to stderr so it appears immediately even
+# though stdout is captured by the surrounding $() subshell.
+# ---------------------------------------------------------------------------
+section "3 / 4  Live Inference — Demonstration Images"
 echo ""
 
-# Python handles all three selection steps.
-# All UI output goes to stderr (not buffered, not captured by $()).
-# Only the final image path is printed to stdout for bash to capture.
-CHOSEN_IMAGE=$(python3 - "$DATASET_DIR" <<'PYEOF'
-import sys, os, re
+CHOSEN_IMAGE=$(python3 - "$DEMO_IMG_DIR" <<'PYEOF'
+import sys, os, json, re
 
-DATASET_DIR = sys.argv[1]
-CLASSES = ["bacterial", "fungal", "healthy", "mould"]
-ui = sys.stderr  # all display output here — never buffered by bash $()
+DEMO_DIR = sys.argv[1]
+ui       = sys.stderr
 
 def p(*args, **kwargs):
     print(*args, **kwargs, file=ui)
@@ -119,133 +149,100 @@ def prompt(msg):
     with open("/dev/tty") as tty:
         return tty.readline().strip()
 
-IMG_EXTS = {".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"}
+def img_num(name):
+    m = re.search(r'(\d+)', name)
+    return int(m.group(1)) if m else 0
 
-def count_images(directory):
-    return sum(1 for f in os.listdir(directory) if os.path.splitext(f)[1] in IMG_EXTS)
+with open(os.path.join(DEMO_DIR, "manifest.json")) as f:
+    manifest = json.load(f)
 
-def get_prefix(filename):
-    return re.sub(r'_\d+\.[^.]+$', '', filename)
+images = sorted(manifest.keys(), key=img_num)
+total  = len(images)
 
-# ── Step 1: Pathogen class ────────────────────────────────────────────────────
-p("  \033[1mStep 1: Choose a pathogen class\033[0m")
-class_options = []
-for cls in CLASSES:
-    cls_dir = os.path.join(DATASET_DIR, cls)
-    n = count_images(cls_dir) if os.path.isdir(cls_dir) else 0
-    class_options.append((cls, n))
+p(f"  Available images:  image_1  –  image_{total}\n")
 
-for i, (cls, n) in enumerate(class_options, 1):
-    p(f"    {i})  {cls}  ({n} images)")
-
-p()
-while True:
-    raw = prompt("  Enter class number (1-4): ")
-    if raw.isdigit() and 1 <= int(raw) <= 4:
-        chosen_class, _ = class_options[int(raw) - 1]
-        p(f"  \033[0;32m  ✔ Selected class: \033[1m{chosen_class}\033[0m")
-        break
-    p("  \033[1;33m  ⚠ Please enter a number between 1 and 4.\033[0m")
-
-# ── Step 2: Disease / plant ───────────────────────────────────────────────────
-p("\n  \033[1m──────────────────────────────────────────\033[0m")
-p(f"\n  \033[1mStep 2: Choose a disease / plant\033[0m\n")
-
-cls_dir = os.path.join(DATASET_DIR, chosen_class)
-all_files = sorted(
-    f for f in os.listdir(cls_dir)
-    if os.path.splitext(f)[1] in IMG_EXTS
-)
-
-seen = {}
-for f in all_files:
-    pfx = get_prefix(f)
-    seen.setdefault(pfx, 0)
-    seen[pfx] += 1
-
-prefixes = sorted(seen.keys())
-for i, pfx in enumerate(prefixes, 1):
-    p(f"    {i})  {pfx.replace('_', ' ')}  ({seen[pfx]} images)")
-
-p()
-while True:
-    raw = prompt(f"  Enter disease number (1-{len(prefixes)}): ")
-    if raw.isdigit() and 1 <= int(raw) <= len(prefixes):
-        chosen_prefix = prefixes[int(raw) - 1]
-        p(f"  \033[0;32m  ✔ Selected: \033[1m{chosen_prefix.replace('_', ' ')}\033[0m")
-        break
-    p(f"  \033[1;33m  ⚠ Please enter a number between 1 and {len(prefixes)}.\033[0m")
-
-# ── Step 3: Image number ──────────────────────────────────────────────────────
-p("\n  \033[1m──────────────────────────────────────────\033[0m")
-p(f"\n  \033[1mStep 3: Choose an image number\033[0m\n")
-
-disease_files = sorted(f for f in all_files if get_prefix(f) == chosen_prefix)
-total = len(disease_files)
-
-p(f"  Available images: \033[1m1 – {total}\033[0m\n")
-p("  Examples:")
-for j in range(min(3, total)):
-    p(f"    {j+1} →  {disease_files[j]}")
-if total > 3:
-    p("    ...")
-    p(f"    {total} →  {disease_files[-1]}")
-
-p()
 while True:
     raw = prompt(f"  Enter image number (1-{total}): ")
     if raw.isdigit() and 1 <= int(raw) <= total:
-        chosen_file = disease_files[int(raw) - 1]
-        p(f"  \033[0;32m  ✔ Selected: \033[1m{chosen_file}\033[0m")
+        chosen = images[int(raw) - 1]
+        meta   = manifest[chosen]
+        p(f"\n  \033[0;32m  ✔ Selected: \033[1m{chosen}\033[0m")
         break
     p(f"  \033[1;33m  ⚠ Please enter a number between 1 and {total}.\033[0m")
 
-# Only the path goes to stdout — captured cleanly by bash $()
-print(os.path.join(cls_dir, chosen_file), end="")
+print(os.path.join(DEMO_DIR, chosen), end="")
 PYEOF
 )
 
-# ── Run prediction ────────────────────────────────────────────────────────────
+CHOSEN_NAME=$(basename "$CHOSEN_IMAGE")
+
+ACTUAL_CLASS=$(python3 -c "
+import json
+with open('$DEMO_IMG_DIR/manifest.json') as f:
+    m = json.load(f)
+print(m.get('$CHOSEN_NAME', {}).get('class', 'unknown'), end='')
+")
+
+ACTUAL_DISEASE=$(python3 -c "
+import json
+with open('$DEMO_IMG_DIR/manifest.json') as f:
+    m = json.load(f)
+print(m.get('$CHOSEN_NAME', {}).get('disease', ''), end='')
+")
+
 echo ""
 hr
 echo ""
 echo -e "  ${BOLD}Running ensemble prediction...${RESET}"
-echo -e "  Image : ${CYAN}$(basename "$CHOSEN_IMAGE")${RESET}"
+echo -e "  Image   : ${CYAN}${CHOSEN_NAME}${RESET}"
+echo -e "  Actual  : ${CYAN}${ACTUAL_CLASS}${RESET}  (${ACTUAL_DISEASE})"
 echo ""
 
 mkdir -p "$PRED_DIR"
 (cd "$SRC_DIR" && python3 predict.py "$CHOSEN_IMAGE")
 
-# Show where output was saved and open it
 LATEST_PRED=$(ls -td "$PRED_DIR"/*/ 2>/dev/null | head -1)
-if [[ -n "$LATEST_PRED" ]]; then
+if [[ -n "$LATEST_PRED" && -f "${LATEST_PRED}summary.txt" ]]; then
+    PREDICTED_CLASS=$(grep -i "^ENSEMBLE (avg)" "${LATEST_PRED}summary.txt" | awk '{print $3}')
+    ACTUAL_LOWER=$(echo "$ACTUAL_CLASS"    | tr '[:upper:]' '[:lower:]')
+    PREDICTED_LOWER=$(echo "$PREDICTED_CLASS" | tr '[:upper:]' '[:lower:]')
+
     echo ""
-    ok "Grad-CAM + report saved to:  $LATEST_PRED"
-    info "Opening prediction output ..."
-    open "$LATEST_PRED" 2>/dev/null || true
+    echo -e "  ${BOLD}━━━ Classification Result ━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo -e "  Actual class    : ${CYAN}${BOLD}${ACTUAL_CLASS}${RESET}"
+    echo -e "  Predicted class : ${CYAN}${BOLD}${PREDICTED_CLASS}${RESET}"
+    if [[ "$ACTUAL_LOWER" == "$PREDICTED_LOWER" ]]; then
+        echo -e "  Verdict         : ${GREEN}${BOLD}✔  CORRECT${RESET}"
+    else
+        echo -e "  Verdict         : ${RED}${BOLD}✘  INCORRECT${RESET}"
+    fi
+    echo -e "  ${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo ""
+    ok "Grad-CAM + full report saved to:  $LATEST_PRED"
 else
-    warn "predictions/ folder appears empty — check if predict.py completed."
+    warn "Could not read prediction output. Check predictions/ folder."
 fi
 
 pause
 
-# ── Section 4: (Optional) Full ensemble evaluation ────────────────────────────
+# ---------------------------------------------------------------------------
+# Section 4 — Full ensemble evaluation (optional)
+# Reruns ensemble.py over the complete test split and saves updated results.
+# ---------------------------------------------------------------------------
 section "4 / 4  Full Ensemble Evaluation (optional)"
 echo ""
 echo -n "  Run full ensemble evaluation on the test set? (y/N): "
 read -r RUN_ENSEMBLE || RUN_ENSEMBLE="N"
 
-if [[ "${RUN_ENSEMBLE,,}" == "y" ]]; then
+if [[ "$(echo "$RUN_ENSEMBLE" | tr '[:upper:]' '[:lower:]')" == "y" ]]; then
     echo ""
     info "Running ensemble evaluation — this may take a few minutes ..."
     (cd "$SRC_DIR" && python3 ensemble.py)
-    ok "Evaluation complete. Results saved to results/"
-    open "$RESULTS_DIR" 2>/dev/null || true
+    ok "Evaluation complete. Results saved to:  $RESULTS_DIR"
 else
-    info "Skipped — pre-computed results shown in Section 2."
+    info "Skipped."
 fi
 
-# ── Closing ───────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}${GREEN}"
 echo "  ╔═══════════════════════════════════════════════╗"

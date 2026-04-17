@@ -24,3 +24,6 @@ Thumbs.db
 
 # Prediction outputs (generated at inference time)
 predictions/
+demonstration_images/
+# Editor / tool settings
+.claude/
